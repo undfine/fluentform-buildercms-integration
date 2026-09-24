@@ -1,0 +1,19 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build Plugin ZIP",
+            "type": "shell",
+            "command": "cd '${workspaceFolder}' && zip -r '${workspaceFolderBasename}.zip' . -x '*.git*' -x '*node_modules*' -x '*.DS_Store' -x '*.zip' -x '*.vscode*'",
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "panel": "new"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}

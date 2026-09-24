@@ -6,7 +6,7 @@ if (!defined('ABSPATH')) {
 
 class BuilderCMS_API
 {
-	protected $apiUrl = ''; //'https://buildercms.com/cms/'; 
+	protected $apiUrl = 'https://buildercms.com/cms/'; 
 	protected $apiKey = null;
 	protected $apiUser = null;
 	protected $communityId = null;
