@@ -4,7 +4,7 @@ Tags: fluent forms, fluent forms pro, fluent forms pro integration, BuilderCMS
 Requires at least: 6.2
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -100,7 +100,7 @@ This plugin supports two BuilderCMS API modes:
 
 == Changelog ==
 
-= 1.3.0 =
+= 1.3.1 =
 * Added support for legacy ProspectImport endpoint
 * Added API mode selection (Modern vs Legacy)
 * Improved field mapping compatibility with Elementor integration
@@ -113,5 +113,5 @@ This plugin supports two BuilderCMS API modes:
 
 == Upgrade Notice ==
 
-= 1.3.0 =
+= 1.3.1 =
 This version adds support for the legacy BuilderCMS ProspectImport endpoint. If you're migrating from an Elementor BuilderCMS integration, select "Legacy" mode in the settings

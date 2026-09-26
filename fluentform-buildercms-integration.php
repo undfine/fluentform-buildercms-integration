@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Fluent Forms BuilderCMS Integration
  * Description: Used to import and sync contacts with BuilderCMS CRM. Supports both modern REST API and legacy ProspectImport endpoints.
- * Version:     1.3.0
+ * Version:     1.3.1
  * Author:      Dustin Wight
  * Author URI: https://github.com/undfine/fluentform-builder_cms-integration
  * Text Domain: ff_builder_cms

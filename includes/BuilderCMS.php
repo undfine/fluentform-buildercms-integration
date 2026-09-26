@@ -10,6 +10,9 @@ use \FluentForm\Framework\Helpers\ArrayHelper;
 
 class FF_BuilderCMS extends IntegrationManager
 {
+    // Entry data key holding the BuilderCMS cookie ID captured at submission
+    const COOKIE_FIELD = 'buildercms_cookie_id';
+
     public function __construct(Application $app = null)
     {
         parent::__construct(
@@ -26,6 +29,9 @@ class FF_BuilderCMS extends IntegrationManager
         $this->description = 'Create signup forms in WordPress and connect to BuilderCMS';
 
         $this->registerAdminHooks();
+
+        // Capture the BuilderCMS tracking cookie with the submission, while the visitor's request is available
+        add_filter('fluentform/insert_response_data', [$this, 'captureCookieId'], 10, 2);
 
         // uncomment below to turn off async requests for debugging (useful on local environments or when WP-CHRON is not active)
         // add_filter('fluentform_notifying_async_builder_cms', '__return_false');
@@ -292,10 +298,6 @@ class FF_BuilderCMS extends IntegrationManager
                             'key' => 'email_opt_out',
                             'label' => 'Email Opt Out'
                         ],
-                        [
-                            'key' => 'referrer',
-                            'label' => 'Referrer'
-                        ],
                     ],
                 ],
                 [
@@ -367,7 +369,7 @@ class FF_BuilderCMS extends IntegrationManager
                 [
                     'key' => 'referrer',
                     'label' => __('Referrer URL', 'ff_builder_cms'),
-                    'tips' => __('Optional: Use {http_referer} smart tag to capture the referring page URL.', 'ff_builder_cms'),
+                    'tips' => __('Optional: URL sent as the Referrer. BuilderCMS parses UTMs from it (e.g. {atmos_last_attribution}). Leave empty to send the page the form was submitted from.', 'ff_builder_cms'),
                     'component' => 'value_text'
                 ],
                 [
@@ -385,7 +387,7 @@ class FF_BuilderCMS extends IntegrationManager
                 [
                     'key' => 'debug',
                     'label' => __('Debug', 'ff_builder_cms'),
-                    'tips' => __('Turning on Debug will prevent API submission and return the formatted Feed info', 'ff_builder_cms'),
+                    'tips' => __('Turning on Debug will prevent API submission and write the request data to the entry\'s Submission Logs', 'ff_builder_cms'),
                     'component' => 'checkbox-single',
                     'checkbox_label' => 'Debug this feed'
                 ]
@@ -459,7 +461,19 @@ class FF_BuilderCMS extends IntegrationManager
                 $contactData[$cmsField] = $feedData[$formField];
             }
         }
-        
+
+        // BuilderCMS has a single StreetAddress field (500 chars), so line 2 is appended
+        if (!empty($feedData['address2'])) {
+            $contactData['StreetAddress'] = trim(($contactData['StreetAddress'] ?? '') . ', ' . $feedData['address2'], ', ');
+        }
+
+        // EmailOptOut takes "True"/"False". Boolean-like values ("no", "0", "false") opt in;
+        // any other non-empty value (e.g. a checked checkbox label) opts out.
+        if (!empty($feedData['email_opt_out'])) {
+            $optOut = filter_var($feedData['email_opt_out'], FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+            $contactData['EmailOptOut'] = ($optOut === false) ? 'False' : 'True';
+        }
+
         // Add additional optional fields
         if (!empty($sourceDetail)) {
             $contactData['SourceDetail'] = $sourceDetail;
@@ -471,27 +485,26 @@ class FF_BuilderCMS extends IntegrationManager
             $contactData['AlwaysSendAdminEmail'] = 'True';
         }
         
-        // Tracking fields (validated and sanitized)
-        // Validate IP address format (IPv4 or IPv6)
-        if ( !empty($feedData['set_ip_address']) && !empty($_SERVER['REMOTE_ADDR'])) {
-            $ipAddress = filter_var($_SERVER['REMOTE_ADDR'], FILTER_VALIDATE_IP);
+        // Tracking fields (validated and sanitized). Feeds usually run in an async loopback
+        // request, so visitor details come from the entry, not the current request.
+        // IP address recorded by Fluent Forms at submission (IPv4 or IPv6)
+        if (!empty($feedData['set_ip_address']) && !empty($entry->ip)) {
+            $ipAddress = filter_var($entry->ip, FILTER_VALIDATE_IP);
             if ($ipAddress !== false) {
                 $contactData['IPAddress'] = $ipAddress;
             }
         }
 
-        // Validate and sanitize cookie ID (alphanumeric, dashes, underscores only)
-        if (isset($_COOKIE['buildercms'])) {
-            $cookieId = sanitize_text_field($_COOKIE['buildercms']);
-            // Additional validation: only allow alphanumeric, dashes, and underscores
-            if (preg_match('/^[a-zA-Z0-9_-]+$/', $cookieId)) {
-                $contactData['CMSCookieID'] = $cookieId;
-            }
+        // BuilderCMS cookie ID captured at submission (see captureCookieId)
+        $cookieId = $this->getSubmittedCookieId($formData, $entry);
+        if ($cookieId) {
+            $contactData['CMSCookieID'] = $cookieId;
         }
 
-        // Validate and sanitize referrer URL from mapped field
-        if (!empty($feedData['referrer'])) {
-            $referrer = esc_url_raw($feedData['referrer']);
+        // Referrer URL from the feed setting, falling back to the page the form was submitted from
+        $referrer = !empty($feedData['referrer']) ? $feedData['referrer'] : ($entry->source_url ?? '');
+        if ($referrer) {
+            $referrer = esc_url_raw($referrer);
             // Additional check: ensure it's a valid URL with http/https scheme
             if (filter_var($referrer, FILTER_VALIDATE_URL) && preg_match('/^https?:\/\//i', $referrer)) {
                 $contactData['Referrer'] = $referrer;
@@ -535,17 +548,32 @@ class FF_BuilderCMS extends IntegrationManager
             }
         }
         
-        // Debug mode
-        if (!empty($feedData['debug'])) {
-            error_log('BuilderCMS ' . ($isLegacyMode ? 'Legacy' : 'Modern') . ' Mode Data: ' . print_r($contactData, true));
-        }
-        
         // Add filter hooks
         $contactData = apply_filters('fluentform_integration_data_'.$this->integrationKey, $contactData, $feed, $entry);
 
         // Get the API ready
         $api = $this->getApiClient();
-        
+
+        // Debug mode: log the exact request to the entry's Submission Logs and don't send it
+        if (!empty($feedData['debug'])) {
+            $request = $isLegacyMode
+                ? 'GET ' . $api->build_legacy_url(array_change_key_case($contactData, CASE_LOWER))
+                : 'POST CMSProspectImport (credentials added when sent)';
+
+            do_action('fluentform/log_data', [
+                'parent_source_id' => $form->id,
+                'source_type'      => 'submission_item',
+                'source_id'        => $entry->id,
+                'component'        => $this->title,
+                'status'           => 'info',
+                'title'            => sprintf(__('Debug: %s request not sent', 'ff_builder_cms'), $isLegacyMode ? 'Legacy' : 'Modern'),
+                'description'      => '<p>' . esc_html($request) . '</p><pre>' . esc_html(wp_json_encode($contactData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)) . '</pre>',
+            ]);
+
+            do_action('fluentform/integration_action_result', $feed, 'success', __('Debug mode: request not sent, see Submission Logs', 'ff_builder_cms'));
+            return true;
+        }
+
         // Send to BuilderCMS using appropriate method
         if ($isLegacyMode) {
             $response = $api->import_prospect($contactData, 'GET');
@@ -569,6 +597,56 @@ class FF_BuilderCMS extends IntegrationManager
         return true;
     }
 
+
+    /**
+     * Store the visitor's BuilderCMS cookie ID in the entry data (fluentform/insert_response_data),
+     * only for forms with a BuilderCMS feed. No hidden field needed.
+     */
+    public function captureCookieId($formData, $formId)
+    {
+        $cookieId = $this->sanitizeCookieId($_COOKIE['buildercms'] ?? '');
+        if (!$cookieId || !is_array($formData)) {
+            return $formData;
+        }
+
+        $hasFeed = wpFluent()->table('fluentform_form_meta')
+            ->where('form_id', $formId)
+            ->where('meta_key', $this->settingsKey)
+            ->first();
+
+        if ($hasFeed) {
+            $formData[self::COOKIE_FIELD] = $cookieId;
+        }
+
+        return $formData;
+    }
+
+    /**
+     * Cookie ID captured with the submission. Falls back to the current request's cookie
+     * for entries submitted before capture existed (async loopbacks forward cookies).
+     */
+    protected function getSubmittedCookieId($formData, $entry)
+    {
+        if (!empty($formData[self::COOKIE_FIELD])) {
+            return $this->sanitizeCookieId($formData[self::COOKIE_FIELD]);
+        }
+
+        $response = !empty($entry->response) ? json_decode($entry->response, true) : [];
+        if (!empty($response[self::COOKIE_FIELD])) {
+            return $this->sanitizeCookieId($response[self::COOKIE_FIELD]);
+        }
+
+        return $this->sanitizeCookieId($_COOKIE['buildercms'] ?? '');
+    }
+
+    /**
+     * Alphanumeric, dashes and underscores only.
+     */
+    protected function sanitizeCookieId($value)
+    {
+        $value = is_scalar($value) ? sanitize_text_field(wp_unslash($value)) : '';
+        return preg_match('/^[a-zA-Z0-9_-]+$/', $value) ? $value : '';
+    }
 
     protected function getApiClient()
     {

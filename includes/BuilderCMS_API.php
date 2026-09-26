@@ -121,16 +121,8 @@ class BuilderCMS_API
 	 */
 	public function import_prospect_legacy( $data )
 	{
-		$endpoint = 'custom/ProspectImport.aspx';
-		
-		// Encode the data in the legacy format (Key:Value~Key:Value~...)
-		$dataString = $this->encode_legacy_data($data);
-		
-		// Build the request URL
-		$requestUrl = untrailingslashit( $this->apiUrl ) . '/' .$endpoint . "?ProspectData=$dataString";
-		
 		// Send GET request
-		$response = wp_remote_get($requestUrl);
+		$response = wp_remote_get($this->build_legacy_url($data));
 		
 		// Handle response - match Elementor's error handling
 		if ( ! is_wp_error( $response ) ) {
@@ -141,6 +133,22 @@ class BuilderCMS_API
 		}
 	}
 	
+	/**
+	 * Build the legacy ProspectImport.aspx request URL.
+	 *
+	 * @param array $data Contact data in lowercase format
+	 * @return string
+	 */
+	public function build_legacy_url( $data )
+	{
+		$endpoint = 'custom/ProspectImport.aspx';
+
+		// Encode the data in the legacy format (Key:Value~Key:Value~...)
+		$dataString = $this->encode_legacy_data($data);
+
+		return untrailingslashit( $this->apiUrl ) . '/' . $endpoint . "?ProspectData=$dataString";
+	}
+
 	/**
 	 * Encode data in the legacy BuilderCMS format
 	 * Format: Key:Value~Key:Value~Key:Value
