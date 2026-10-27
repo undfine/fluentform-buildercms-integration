@@ -369,7 +369,7 @@ class FF_BuilderCMS extends IntegrationManager
                 [
                     'key' => 'referrer',
                     'label' => __('Referrer URL', 'ff_builder_cms'),
-                    'tips' => __('Optional: URL sent as the Referrer. BuilderCMS parses UTMs from it (e.g. {atmos_last_attribution}). Leave empty to send the page the form was submitted from.', 'ff_builder_cms'),
+                    'tips' => __('Optional: URL sent as the Referrer. BuilderCMS parses UTMs from it (e.g. {utmost_last_attribution}). Leave empty to send the page the form was submitted from.', 'ff_builder_cms'),
                     'component' => 'value_text'
                 ],
                 [
