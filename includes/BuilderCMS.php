@@ -215,6 +215,7 @@ class FF_BuilderCMS extends IntegrationManager
                 ]
             ],
             'note' => '',
+            'inactive_condition' => '',
             'source_detail' => '',
             'admin_email' => '',
             'referrer' => '',
@@ -321,6 +322,7 @@ class FF_BuilderCMS extends IntegrationManager
                         'IncomeLevel' => '',
                         'PriceRange' => '',
                         'DesiredBedrooms' => '',
+                        'Active' => '',
                         'Custom1' => '',
                         'Custom2' => '',
                         'Custom3' => '',
@@ -338,13 +340,21 @@ class FF_BuilderCMS extends IntegrationManager
                 [
                     'key' => 'is_broker',
                     'label' => __('Is Broker', 'ff_builder_cms'),
-                    'tips' => __('Set this to true to force the PurchaseType as "Broker". Or map this to a checkbox field with "broker" as one of the values.' , 'ff_builder_cms'),
-                    'component' => 'value_text'
+                    'tips' => __('Sets PurchaseType to "Broker". Use conditions, one per line (any match counts): inputs.field_name operator value. Operators: =, !=, is empty, not empty. Example: "inputs.interests = broker". Also still accepts "true", or a mapped field smartcode whose value contains "broker".', 'ff_builder_cms'),
+                    'placeholder' => 'inputs.interests = broker',
+                    'component' => 'value_textarea'
                 ],
                 [
                     'key' => 'note',
                     'label' => __('Note', 'ff_builder_cms'),
                     'tips' => __('You can write a note for this contact or add smart tags to include', 'ff_builder_cms'),
+                    'component' => 'value_textarea'
+                ],
+                [
+                    'key' => 'inactive_condition',
+                    'label' => __('Inactive condition', 'ff_builder_cms'),
+                    'tips' => __('Optional. Contacts are Active by default. Set one condition per line; if any line matches, the contact is sent as Active = False. Format: inputs.field_name operator value. Operators: =, !=, is empty, not empty. Examples: "inputs.best_contact = none" or "inputs.contact_ok is empty".', 'ff_builder_cms'),
+                    'placeholder' => 'inputs.best_contact = none',
                     'component' => 'value_textarea'
                 ],
                 [
@@ -474,6 +484,13 @@ class FF_BuilderCMS extends IntegrationManager
             $contactData['EmailOptOut'] = ($optOut === false) ? 'False' : 'True';
         }
 
+        // Contacts are Active by default; only send Active when an inactive condition matches
+        $invalidLines = [];
+        if ($this->matchesConditions(ArrayHelper::get($feed, 'settings.inactive_condition', ''), $formData, $invalidLines)) {
+            $contactData['Active'] = 'False';
+        }
+        $this->logInvalidConditionLines('Inactive condition', $invalidLines, $form, $entry);
+
         // Add additional optional fields
         if (!empty($sourceDetail)) {
             $contactData['SourceDetail'] = $sourceDetail;
@@ -516,7 +533,13 @@ class FF_BuilderCMS extends IntegrationManager
         if (!empty($feedData['extra_fields'])) {
             foreach (ArrayHelper::get($feedData, 'extra_fields') as $item) {
                 if (!empty($item['item_value']) && !empty($item['label'])) {
-                    $contactData[$item['label']] = $item['item_value'];
+                    $value = $item['item_value'];
+                    // Active takes "True"/"False"; "no", "0" and "false" are treated as False
+                    if ($item['label'] === 'Active') {
+                        $bool = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                        $value = ($bool === false) ? 'False' : 'True';
+                    }
+                    $contactData[$item['label']] = $value;
                 }
             }
         }
@@ -533,21 +556,24 @@ class FF_BuilderCMS extends IntegrationManager
             }
         }
         
-        // If IsBroker field is set, check for 'broker' value or boolean true
-        if (!empty($feedData['is_broker'])) {
+        // Is Broker: condition lines (e.g. "inputs.interests = broker") take priority. Otherwise fall back to
+        // the original behavior: a true-like value, or a mapped value containing "broker".
+        $invalidLines = [];
+        $parsedCount = 0;
+        $isBroker = $this->matchesConditions(ArrayHelper::get($feed, 'settings.is_broker', ''), $formData, $invalidLines, $parsedCount);
+        if ($parsedCount > 0) {
+            $this->logInvalidConditionLines('Is Broker', $invalidLines, $form, $entry);
+        } elseif (!empty($feedData['is_broker'])) {
             $isBrokerValue = $feedData['is_broker'];
-            
-            // Check if it's a boolean string "true" or "1"
             $isTrue = filter_var($isBrokerValue, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
-            
-            // Check if value contains "broker" (case-insensitive) for checkbox options
             $containsBroker = is_string($isBrokerValue) && stripos($isBrokerValue, 'broker') !== false;
-            
-            if ($isTrue === true || $containsBroker) {
-                $contactData['PurchaseType'] = 'Broker';
-            }
+            $isBroker = ($isTrue === true || $containsBroker);
         }
-        
+
+        if ($isBroker) {
+            $contactData['PurchaseType'] = 'Broker';
+        }
+
         // Add filter hooks
         $contactData = apply_filters('fluentform_integration_data_'.$this->integrationKey, $contactData, $feed, $entry);
 
@@ -597,6 +623,96 @@ class FF_BuilderCMS extends IntegrationManager
         return true;
     }
 
+
+    /**
+     * Note unrecognized condition lines in the entry's Submission Logs so typos aren't silent.
+     */
+    protected function logInvalidConditionLines($settingLabel, $invalidLines, $form, $entry)
+    {
+        if (!$invalidLines) {
+            return;
+        }
+
+        do_action('fluentform/log_data', [
+            'parent_source_id' => $form->id,
+            'source_type'      => 'submission_item',
+            'source_id'        => $entry->id,
+            'component'        => $this->title,
+            'status'           => 'info',
+            'title'            => sprintf(__('%s: unrecognized lines ignored', 'ff_builder_cms'), $settingLabel),
+            'description'      => '<p>' . esc_html__('Expected format: inputs.field_name = value (or !=, is empty, not empty).', 'ff_builder_cms') . '</p><pre>' . esc_html(implode("\n", $invalidLines)) . '</pre>',
+        ]);
+    }
+
+    /**
+     * True if any line of a condition setting (Inactive condition, Is Broker) matches the submission.
+     * $parsedCount returns how many lines were valid conditions; $invalidLines the ones that weren't.
+     * Line format: inputs.field_name <operator> [value], operators: =, !=, is empty, not empty.
+     * Parsed from the raw setting (not the smartcode-processed one) so submitted text can't alter a rule.
+     */
+    protected function matchesConditions($setting, $formData, &$invalidLines = [], &$parsedCount = 0)
+    {
+        $invalidLines = [];
+        $parsedCount = 0;
+        if (!is_string($setting) || trim($setting) === '') {
+            return false;
+        }
+
+        // Normalize non-breaking spaces and cap the size so a bad paste can't cause trouble
+        $setting = str_replace("\xC2\xA0", ' ', substr($setting, 0, 5000));
+
+        $result = false;
+        foreach (preg_split('/\R/', $setting) as $line) {
+            if (trim($line) === '') {
+                continue;
+            }
+
+            if (!preg_match('/^\s*\{*\s*inputs\.([^\s=!<>{}]+)\s*\}*\s*(!=|==|=|(?:is\s+)?not\s+empty|is\s+empty)\s*(.*?)\s*$/i', $line, $m)) {
+                $invalidLines[] = trim($line);
+                continue;
+            }
+
+            $parsedCount++;
+
+            // Allow bracket notation (names[first_name]) like Fluent's own conditions
+            $fieldKey = trim(str_replace(['[', ']'], ['.', ''], $m[1]), '.');
+            $actual = ArrayHelper::get($formData, $fieldKey, '');
+            $actual = array_map(
+                function ($v) {
+                    return strtolower(trim((string) $v));
+                },
+                array_values(array_filter((array) $actual, 'is_scalar'))
+            );
+            $actual = array_values(array_filter($actual, function ($v) {
+                return $v !== '';
+            }));
+
+            $operator = strtolower(preg_replace('/\s+/', ' ', $m[2]));
+            $operator = preg_replace('/^is not empty$/', 'not empty', $operator);
+            $expected = strtolower(trim($m[3], " \t\"'"));
+
+            switch ($operator) {
+                case '=':
+                case '==':
+                    $matched = in_array($expected, $actual, true);
+                    break;
+                case '!=':
+                    $matched = !in_array($expected, $actual, true);
+                    break;
+                case 'is empty':
+                    $matched = empty($actual);
+                    break;
+                default: // not empty
+                    $matched = !empty($actual);
+            }
+
+            if ($matched) {
+                $result = true; // keep going so every invalid line is still reported
+            }
+        }
+
+        return $result;
+    }
 
     /**
      * Store the visitor's BuilderCMS cookie ID in the entry data (fluentform/insert_response_data),

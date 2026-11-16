@@ -4,7 +4,7 @@ Tags: fluent forms, fluent forms pro, fluent forms pro integration, BuilderCMS
 Requires at least: 6.2
 Tested up to: 6.6
 Requires PHP: 7.4
-Stable tag: 1.3.1
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -20,6 +20,8 @@ An integration for Fluent Forms that allows automatic syncing of form submission
 * **Custom Attributes**: Add custom contact attributes
 * **Conditional Logic**: Enable/disable integration based on form values
 * **Contact Status Management**: Set initial contact status and type
+* **Inactive Condition**: Send a contact as Active = False based on a form value (e.g. "not right now")
+* **Is Broker Conditions**: Set PurchaseType = Broker from a form value
 * **Debug Mode**: Test integration without sending data
 
 == Installation ==
@@ -72,7 +74,24 @@ This plugin supports two BuilderCMS API modes:
    - **Admin Email**: Receive import notifications (Legacy mode)
    - **Contact Status**: Initial prospect status
    - **Note**: Add notes to the contact record
+   - **Inactive condition**: Contacts are Active by default. Add conditions to send `Active = False` (see below)
+   - **Is Broker**: Set `PurchaseType = Broker` (see below)
 6. Enable the feed and save
+
+= Condition Settings (Inactive condition, Is Broker) =
+
+These two settings take one condition per line. If any line matches, the setting applies.
+
+    inputs.best_contact = none
+    inputs.contact_ok is empty
+
+* Format: `inputs.field_name operator value`
+* Operators: `=`, `!=`, `is empty`, `not empty` (case-insensitive; `==` and `is not empty` also work)
+* `{inputs.field_name}` and `names[first_name]` style field names are accepted. Checkbox groups match if any selected value equals the value.
+* A missing or unchecked field counts as empty.
+* Lines that aren't valid conditions are ignored and listed in the entry's Submission Logs.
+* **Inactive condition**: when a line matches, `Active=False` is sent. Otherwise `Active` is not sent (BuilderCMS defaults to active). `Active` can also be sent directly through Additional Contact Fields (`true`/`false`).
+* **Is Broker**: when a line matches, `PurchaseType=Broker` is sent. Existing values still work: `true`, or a mapped field whose value contains "broker".
 
 == Field Mapping ==
 
@@ -100,6 +119,12 @@ This plugin supports two BuilderCMS API modes:
 
 == Changelog ==
 
+= 1.4.0 =
+* Added "Inactive condition" setting: sends Active = False when a form value matches (e.g. `inputs.best_contact = none`)
+* "Is Broker" now accepts condition lines such as `inputs.interests = broker` (existing true / "broker" values still work)
+* Added "Active" to the Additional Contact Fields options
+* Unrecognized condition lines are noted in the entry's Submission Logs
+
 = 1.3.1 =
 * Added support for legacy ProspectImport endpoint
 * Added API mode selection (Modern vs Legacy)
@@ -112,6 +137,9 @@ This plugin supports two BuilderCMS API modes:
 * Initial BuilderCMS integration (REST API only)
 
 == Upgrade Notice ==
+
+= 1.4.0 =
+Adds Inactive condition and Is Broker condition settings. Existing feeds keep working unchanged.
 
 = 1.3.1 =
 This version adds support for the legacy BuilderCMS ProspectImport endpoint. If you're migrating from an Elementor BuilderCMS integration, select "Legacy" mode in the settings
