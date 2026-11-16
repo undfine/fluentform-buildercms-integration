@@ -22,7 +22,8 @@ An integration for Fluent Forms that allows automatic syncing of form submission
 * **Contact Status Management**: Set initial contact status and type
 * **Inactive Condition**: Send a contact as Active = False based on a form value (e.g. "not right now")
 * **Is Broker Conditions**: Set PurchaseType = Broker from a form value
-* **Debug Mode**: Test integration without sending data
+* **Tracking**: Captures the BuilderCMS tracking cookie, submission IP address and referrer (with UTMs) for BuilderCMS source attribution
+* **Debug Mode**: Test integration without sending data; the exact request is written to the entry's Submission Logs
 
 == Installation ==
 
@@ -41,7 +42,7 @@ This plugin supports two BuilderCMS API modes:
 - Uses: `https://www.buildercms.com/cms/custom/ProspectImport.aspx`
 - Method: GET request with URL-encoded data
 - Authentication: Community Number only
-- Best for: Older BuilderCMS installations, matches Elementor integration
+- Best for: Older BuilderCMS installations not requiring authentication
 
 **Modern REST API**
 - Uses: `https://api.buildercms.com/Contact/CreateOrUpdate`
@@ -74,6 +75,9 @@ This plugin supports two BuilderCMS API modes:
    - **Admin Email**: Receive import notifications (Legacy mode)
    - **Contact Status**: Initial prospect status
    - **Note**: Add notes to the contact record
+   - **Email Opt Out**: Map a field to send `EmailOptOut`. Values like `no`, `0` or `false` opt in; any other non-empty value (e.g. a checked checkbox) opts out
+   - **Set IP Address**: Sends the IP address recorded with the submission as `IPAddress`
+   - **Referrer URL**: URL sent as `Referrer`; BuilderCMS reads UTMs from it (e.g. a UTMost Attribution smartcode such as `{utmost_last_attribution}`). If empty, the page the form was submitted from is sent
    - **Inactive condition**: Contacts are Active by default. Add conditions to send `Active = False` (see below)
    - **Is Broker**: Set `PurchaseType = Broker` (see below)
 6. Enable the feed and save
@@ -103,6 +107,12 @@ These two settings take one condition per line. If any line matches, the setting
 * Address Line 1 & 2
 * City, State, Zip, Country
 
+Address Line 2 is appended to the single BuilderCMS `StreetAddress` field.
+
+= Tracking =
+* **CMSCookieID**: The visitor's `buildercms` cookie is stored with the submission automatically (only on forms with a BuilderCMS feed; no hidden field needed) and sent as `CMSCookieID`, so it still works when feeds run asynchronously.
+* **IPAddress** and **Referrer** come from the stored entry for the same reason.
+
 = Legacy Mode Additional Fields =
 * Source Detail
 * Admin Email
@@ -126,6 +136,11 @@ These two settings take one condition per line. If any line matches, the setting
 * Unrecognized condition lines are noted in the entry's Submission Logs
 
 = 1.3.1 =
+* Captures the BuilderCMS cookie ID (`CMSCookieID`) at submission and sends it with the contact
+* IP address and referrer are now read from the saved entry, so they are correct when feeds run asynchronously
+* Referrer falls back to the page the form was submitted from; supports UTMost Attribution smartcodes
+* Added Email Opt Out mapping (`EmailOptOut`) and Address Line 2 (appended to `StreetAddress`)
+* Debug mode now writes the exact request to the entry's Submission Logs and doesn't send it
 * Added support for legacy ProspectImport endpoint
 * Added API mode selection (Modern vs Legacy)
 * Improved field mapping compatibility with Elementor integration
